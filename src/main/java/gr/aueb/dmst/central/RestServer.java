@@ -35,16 +35,28 @@ public class RestServer {
         server.setExecutor(null);
         server.start();
         System.out.println("REST Server running on http://localhost:" + port);
+        System.out.println("Web UI Dashboard: http://localhost:8080/");
     }
 
     private class ElevatorsHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+
             if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 // Μετατροπή της λίστας των ασανσέρ σε JSON κείμενο
                 String jsonResponse = mapper.writeValueAsString(elevators);
 
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
                 byte[] responseBytes = jsonResponse.getBytes();
                 exchange.sendResponseHeaders(200, responseBytes.length);
 
