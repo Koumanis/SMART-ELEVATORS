@@ -1,4 +1,7 @@
 gr/aueb/dmst/central/RestServer.class
+gr/aueb/dmst/central/CallRequest.class
 gr/aueb/dmst/elevator/ElevatorModel.class
+gr/aueb/dmst/central/Dispatcher.class
 gr/aueb/dmst/central/RestServer$ElevatorsHandler.class
+gr/aueb/dmst/central/RestServer$CallsHandler.class
 gr/aueb/dmst/ui/TerminalUI.class
