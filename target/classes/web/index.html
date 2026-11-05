@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Elevators — Telemetry Management System</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar / Topbar Navigation -->
+    <header class="console-header">
+      <div class="brand">
+        <span class="brand-badge">BMS v2.4</span>
+        <h1 class="brand-title">Smart Elevators — Vertical Transit Controller</h1>
+      </div>
+      <div class="system-meta">
+        <div class="meta-item">
+          <span class="meta-label">Total Floors</span>
+          <span class="meta-value">200</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Active Units</span>
+          <span class="meta-value" id="active-units-count">3</span>
+        </div>
+        <div id="connection-pill" class="status-indicator offline">
+          <span class="indicator-dot"></span>
+          <span class="indicator-label">CONNECTING</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="console-grid">
+      <!-- Left Panel: Dispatch / Simulation Controls -->
+      <aside class="control-panel">
+        <div class="panel-section">
+          <h2 class="section-title">Manual Dispatch Request</h2>
+          <form id="call-form">
+            <div class="form-row">
+              <div class="input-field">
+                <label for="source-floor">Source Floor (0–199)</label>
+                <input type="number" id="source-floor" min="0" max="199" value="0" required>
+              </div>
+              <div class="input-field">
+                <label for="dest-floor">Target Floor (0–199)</label>
+                <input type="number" id="dest-floor" min="0" max="199" value="120" required>
+              </div>
+            </div>
+            <button type="submit" id="btn-submit" class="primary-btn">
+              <span>Transmit Dispatch</span>
+              <span class="btn-subtext">POST /api/calls</span>
+            </button>
+          </form>
+          <div id="call-console-log" class="console-feedback">System standby. Waiting for telemetry...</div>
+        </div>
+
+        <!-- Telemetry Feed / Metrics -->
+        <div class="panel-section telemetry-stats">
+          <h2 class="section-title">Telemetry Summary</h2>
+          <div class="telemetry-table" id="telemetry-table">
+            <!-- Dynamically updated -->
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Display: 200-Floor Shaft Monitor -->
+      <main class="visualization-panel">
+        <div class="viz-header">
+          <h2 class="section-title">Vertical Shafts Monitor (200 Floors)</h2>
+          <span class="viz-scale-info">Scale: 0.5% per floor unit</span>
+        </div>
+
+        <div class="shafts-wrapper">
+          <!-- Floor Altitude Ruler -->
+          <div class="altitude-ruler">
+            <span class="ruler-marker">F199 (Top)</span>
+            <span class="ruler-marker">F150</span>
+            <span class="ruler-marker">F100 (Sky Lobby)</span>
+            <span class="ruler-marker">F50</span>
+            <span class="ruler-marker">G (F000)</span>
+          </div>
+
+          <!-- Shafts Container -->
+          <div id="shafts-container" class="shafts-container">
+            <!-- Shafts generated dynamically -->
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
