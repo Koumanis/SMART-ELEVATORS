@@ -21,15 +21,14 @@ public class RestServer {
     public RestServer(int port) {
         this.port = port;
         this.mapper = new ObjectMapper();
-        this.elevators = new ArrayList<>();
         
+        this.elevators = new ArrayList<>();
         this.elevators.add(new ElevatorModel("E1", 0));
         this.elevators.add(new ElevatorModel("E2", 60));
         this.elevators.add(new ElevatorModel("E3", 130));
 
         this.dispatcher = new Dispatcher(this.elevators);
     }
-
 
     public void start() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
@@ -56,7 +55,6 @@ public class RestServer {
             }
 
             if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                // Μετατροπή της λίστας των ασανσέρ σε JSON κείμενο
                 String jsonResponse = mapper.writeValueAsString(elevators);
 
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
