@@ -18,8 +18,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
+/**
+ * Σύστημα αυτόματης αξιολόγησης (benchmarking) για τους ανελκυστήρες.
+ * Λειτουργεί ως εξωτερικός client που στέλνει μαζικές κλήσεις στον REST Server,
+ * προσομοιώνει ώρες αιχμής και καταγράφει χρόνους απόκρισης (latency) και κατανομή φόρτου.
+ */
 public class EvaluationSystem {
 
+    // Προεπιλεγμένες ρυθμίσεις προσομοίωσης (αν δεν δοθούν ορίσματα από το τερματικό)
     private static final String DEFAULT_SERVER_URL = "http://localhost:8080/api";
     private static final int DEFAULT_CALLS_PER_SCENARIO = 10;
     private static final int DEFAULT_MAX_FLOOR = 199;
@@ -48,9 +54,16 @@ public class EvaluationSystem {
         this.csvRecords = new ArrayList();
     }
 
+    /**
+     * Κύρια ροή εκτέλεσης:
+     * 1. Ελέγχει τη σύνδεση με τον server και καταγράφει πού βρίσκεται αρχικά κάθε ασανσέρ.
+     * 2. Τρέχει τα επιλεγμένα σενάρια κίνησης.
+     * 3. Ξαναδιαβάζει τις θέσεις των ανελκυστήρων, τυπώνει τα στατιστικά και βγάζει το CSV.
+     */
     public void execute() {
         printHeader();
 
+        // Ανάκτηση αρχικής εικόνας του στόλου πριν ξεκινήσουν οι κλήσεις
         List initialFleet = fetchElevators();
         if (initialFleet == null) {
             System.err.println("[ΣΦΑΛΜΑ] Αδυναμία σύνδεσης στον REST Server (" + serverUrl + ").");
@@ -58,6 +71,7 @@ public class EvaluationSystem {
             return;
         }
 
+        // Αποθηκεύουμε τον αρχικό όροφο κάθε ανελκυστήρα για να υπολογίσουμε στο τέλος τη μετατόπισή του
         Map initialFloors = new LinkedHashMap();
         System.out.println("Σύνδεση επιτυχής! Αρχική κατάσταση στόλου (" + initialFleet.size() + " ανελκυστήρες):");
         for (Object obj : initialFleet) {
@@ -69,6 +83,7 @@ public class EvaluationSystem {
                     id, floor, elev.get("direction"));
         }
 
+        // Αν το mode είναι SUITE, τρέχουμε διαδοχικά και τα 3 σενάρια αιχμής
         List scenariosToRun = new ArrayList();
         if ("SUITE".equals(mode)) {
             scenariosToRun.add("MORNING_RUSH");
@@ -84,6 +99,7 @@ public class EvaluationSystem {
             results.add(runScenario(scenario));
         }
 
+        // Περιμένουμε 1.5 δευτερόλεπτο ώστε να προλάβουν να κινηθούν τα ασανσέρ και παίρνουμε τελική εικόνα
         System.out.println("\nΑνάκτηση τελικής τηλεμετρίας στόλου...");
         sleepQuietly(1500);
         List finalFleet = fetchElevators();
@@ -92,6 +108,10 @@ public class EvaluationSystem {
         exportCsvReport();
     }
 
+    /**
+     * Εκτελεί ένα μεμονωμένο σενάριο (π.χ. MORNING_RUSH) στέλνοντας numCalls αιτήματα
+     * και μετρώντας το χρόνο απόκρισης (latency) κάθε κλήσης ξεχωριστά.
+     */
     private ScenarioResult runScenario(String scenario) {
         System.out.println("\n-------------------------------------------------------------------------");
         System.out.printf("ΕΚΤΕΛΕΣΗ ΣΕΝΑΡΙΟΥ: %-14s (%d κλήσεις | Όροφοι 0-%d | Delay %dms)%n",
@@ -109,12 +129,14 @@ public class EvaluationSystem {
         long scenarioStartNs = System.nanoTime();
 
         for (int i = 1; i <= numCalls; i++) {
+            // Παραγωγή ρεαλιστικού ζεύγους (αφετηρία -> προορισμός) ανάλογα με το σενάριο
             int[] pair = generateTrip(scenario, random);
             int source = pair[0];
             int dest = pair[1];
             int distance = Math.abs(dest - source);
             totalDistanceFloors += distance;
 
+            // Χρονομέτρηση του HTTP POST αιτήματος στον Dispatcher
             long reqStartNs = System.nanoTime();
             DispatchOutcome outcome = sendCall(source, dest);
             long latencyMs = (System.nanoTime() - reqStartNs) / 1_000_000;
@@ -135,6 +157,7 @@ public class EvaluationSystem {
                 System.out.printf("  [%02d/%02d] Όροφος %3d -> %3d | ΑΠΟΤΥΧΙΑ%n", i, numCalls, source, dest);
             }
 
+            // Καταγραφή της μέτρησης στη λίστα για την εξαγωγή του CSV
             csvRecords.add(new String[]{
                     scenario,
                     String.valueOf(i),
@@ -146,6 +169,7 @@ public class EvaluationSystem {
                     outcome.assignedElevator != null ? outcome.assignedElevator : "N/A"
             });
 
+            // Μικρή παύση μεταξύ των κλήσεων για να προσομοιώνεται φυσιολογική ροή επιβατών
             if (i < numCalls && delayMs > 0) {
                 sleepQuietly(delayMs);
             }
@@ -160,6 +184,12 @@ public class EvaluationSystem {
         );
     }
 
+    /**
+     * Δημιουργεί μια τυχαία διαδρομή επιβάτη ανάλογα με την ώρα της ημέρας:
+     * - MORNING_RUSH: 80% πιθανότητα να ξεκινά από το ισόγειο (0) προς τους πάνω ορόφους.
+     * - EVENING_RUSH: 80% πιθανότητα να κατεβαίνει από πάνω ορόφους προς το ισόγειο (0).
+     * - INTERFLOOR:   Μετακινήσεις αποκλειστικά μεταξύ ενδιάμεσων ορόφων.
+     */
     private int[] generateTrip(String scenario, Random random) {
         if (maxFloor <= 0) {
             return new int[]{0, 1};
@@ -187,12 +217,14 @@ public class EvaluationSystem {
                 break;
         }
 
+        // Αποφεύγουμε κλήσεις όπου η αφετηρία συμπίπτει με τον προορισμό
         while (dest == source) {
             dest = random.nextInt(maxFloor + 1);
         }
         return new int[]{source, dest};
     }
 
+    // Ζητάει από το GET /api/elevators την τρέχουσα κατάσταση όλων των ανελκυστήρων
     private List fetchElevators() {
         try {
             HttpRequest request = HttpRequest.newBuilder()
@@ -208,6 +240,7 @@ public class EvaluationSystem {
         return null;
     }
 
+    // Στέλνει μια νέα κλήση επιβάτη σε μορφή JSON στο POST /api/calls
     private DispatchOutcome sendCall(int sourceFloor, int destinationFloor) {
         try {
             String payload = String.format("{\"sourceFloor\":%d,\"destinationFloor\":%d}",
@@ -223,6 +256,7 @@ public class EvaluationSystem {
             String assigned = null;
             String bodyText = response.body() != null ? String.valueOf(response.body()) : "";
 
+            // Αν ο server επιστρέψει ποιος ανελκυστήρας ανέλαβε την κλήση, το διαβάζουμε
             if (ok && !bodyText.isBlank()) {
                 try {
                     Map bodyMap = mapper.readValue(bodyText, Map.class);
@@ -253,6 +287,7 @@ public class EvaluationSystem {
         System.out.println("Ημερομηνία: " + timestamp + " | Endpoint: " + serverUrl + " | Mode: " + mode);
     }
 
+    // Υπολογίζει τους μέσους όρους (Επιτυχία, Απόσταση, Latency, Throughput) και τυπώνει τον τελικό πίνακα
     private void printExecutiveSummary(List results, Map initialFloors, List finalFleet) {
         System.out.println("\n=========================================================================");
         System.out.println("                  ΣΥΓΚΕΝΤΡΩΤΙΚΑ ΑΠΟΤΕΛΕΣΜΑΤΑ ΑΞΙΟΛΟΓΗΣΗΣ                 ");
@@ -290,6 +325,7 @@ public class EvaluationSystem {
         System.out.printf("ΣΥΝΟΛΟ (%2d κλ.) | %5.1f%%   | %6.1f όρ. | %8.2f ms | -%n",
                 grandTotalCalls, overallSuccess, overallAvgDist, overallAvgLat);
 
+        // Σύγκριση αρχικού και τελικού ορόφου για να φανεί η κατανομή εργασίας στους 3 ανελκυστήρες
         if (finalFleet != null) {
             System.out.println("\nΤελική Κατάσταση & Μετατόπιση Στόλου Ανελκυστήρων:");
             for (Object obj : finalFleet) {
@@ -306,6 +342,7 @@ public class EvaluationSystem {
         System.out.println("=========================================================================");
     }
 
+    // Αποθηκεύει αναλυτικά κάθε κλήση σε αρχείο CSV (target/evaluation-report.csv) για Excel/γραφήματα
     private void exportCsvReport() {
         try {
             File targetDir = new File("target");
@@ -345,6 +382,7 @@ public class EvaluationSystem {
         }
     }
 
+    // Βοηθητική κλάση που κρατάει τα συγκεντρωτικά στατιστικά κάθε σεναρίου
     private static class ScenarioResult {
         final String scenario;
         final int totalCalls;
@@ -371,6 +409,7 @@ public class EvaluationSystem {
         }
     }
 
+    // Βοηθητική κλάση που κρατάει την απάντηση του server για μια μεμονωμένη κλήση
     private static class DispatchOutcome {
         final boolean success;
         final String assignedElevator;
@@ -381,6 +420,7 @@ public class EvaluationSystem {
         }
     }
 
+    // Σημείο εκκίνησης: δέχεται προαιρετικά ορίσματα [numCalls] [maxFloor] [delayMs] [mode] [serverUrl]
     public static void main(String[] args) {
         int numCalls = DEFAULT_CALLS_PER_SCENARIO;
         int maxFloor = DEFAULT_MAX_FLOOR;
