@@ -5,6 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -411,6 +415,7 @@ public class EvaluationSystem {
 
     // Αποθηκεύει αναλυτικά κάθε κλήση σε αρχείο CSV (target/evaluation-report.csv)
     private void exportCsvReport() {
+        generateHtmlReport("target/evaluation-report.csv", "target/evaluation-report.html");
         try {
             File targetDir = new File("target");
             if (!targetDir.exists()) {
@@ -521,5 +526,80 @@ public class EvaluationSystem {
         }
 
         new EvaluationSystem(serverUrl, numCalls, maxFloor, delayMs, mode).execute();
+    }
+    /**
+     * Μετατρέπει τα αποτελέσματα του CSV σε βασική αναφορά HTML.
+     */
+    private static void generateHtmlReport(String csvPath, String htmlPath) {
+        try {
+            Path source = Path.of(csvPath);
+            if (!Files.exists(source)) {
+                System.err.println("⚠️ Δεν βρέθηκε το αρχείο CSV: " + csvPath);
+                return;
+            }
+
+            List<String> lines = Files.readAllLines(source, StandardCharsets.UTF_8);
+            if (lines.size() < 2) {
+                return;
+            }
+
+            String[] headers = lines.get(0).split(",");
+            List<String[]> rows = new ArrayList<>();
+            for (int i = 1; i < lines.size(); i++) {
+                if (!lines.get(i).trim().isEmpty()) {
+                    rows.add(lines.get(i).split(","));
+                }
+            }
+
+            StringBuilder headerHtml = new StringBuilder("<tr>");
+            for (String h : headers) {
+                headerHtml.append("<th>").append(h.trim()).append("</th>");
+            }
+            headerHtml.append("</tr>");
+
+            StringBuilder rowsHtml = new StringBuilder();
+            for (String[] row : rows) {
+                rowsHtml.append("<tr>");
+                for (String cell : row) {
+                    rowsHtml.append("<td>").append(cell.trim()).append("</td>");
+                }
+                rowsHtml.append("</tr>\n");
+            }
+
+            String html = """
+                <!DOCTYPE html>
+                <html lang="el">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Smart Elevators - Αναφορά Αξιολόγησης</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 40px; background: #f8fafc; color: #1e293b; }
+                        h1 { color: #0f172a; }
+                        table { width: 100%%; border-collapse: collapse; background: #ffffff; margin-top: 20px; }
+                        th, td { padding: 12px; border: 1px solid #cbd5e1; text-align: left; }
+                        th { background: #e2e8f0; }
+                    </style>
+                </head>
+                <body>
+                    <h1>Smart Elevators — Αναφορά Αξιολόγησης</h1>
+                    <p>Συγκεντρωτικά αποτελέσματα προσομοίωσης ανά σενάριο κίνησης.</p>
+                    <table>
+                        <thead>%s</thead>
+                        <tbody>%s</tbody>
+                    </table>
+                </body>
+                </html>
+                """.formatted(headerHtml.toString(), rowsHtml.toString());
+
+            Path target = Path.of(htmlPath);
+            if (target.getParent() != null) {
+                Files.createDirectories(target.getParent());
+            }
+            Files.writeString(target, html, StandardCharsets.UTF_8);
+            System.out.println("📄 Δημιουργήθηκε η βασική αναφορά HTML: " + target.toAbsolutePath());
+
+        } catch (IOException e) {
+            System.err.println("❌ Σφάλμα κατά τη δημιουργία HTML: " + e.getMessage());
+        }
     }
 }
