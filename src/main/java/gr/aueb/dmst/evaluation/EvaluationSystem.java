@@ -528,7 +528,8 @@ public class EvaluationSystem {
         new EvaluationSystem(serverUrl, numCalls, maxFloor, delayMs, mode).execute();
     }
     /**
-     * Μετατρέπει τα αποτελέσματα του CSV σε βασική αναφορά HTML.
+     * Ομαδοποιεί τις μετρήσεις του CSV ανά σενάριο και δημιουργεί αναφορά HTML
+     * με κάρτες συνολικών δεικτών (KPIs) και συγκριτικό πίνακα.
      */
     private static void generateHtmlReport(String csvPath, String htmlPath) {
         try {
@@ -544,26 +545,102 @@ public class EvaluationSystem {
             }
 
             String[] headers = lines.get(0).split(",");
-            List<String[]> rows = new ArrayList<>();
+            int distanceCol = -1;
+            int latencyCol = -1;
+            int statusCol = -1;
+
+            for (int c = 0; c < headers.length; c++) {
+                String h = headers[c].trim().toLowerCase();
+                if (h.contains("distance")) distanceCol = c;
+                else if (h.contains("latency") || h.contains("ms") || h.contains("response")) latencyCol = c;
+                else if (h.contains("status") || h.contains("success")) statusCol = c;
+            }
+
+            // Ομαδοποίηση των εγγραφών ανά σενάριο
+            Map<String, List<String[]>> groupedByScenario = new LinkedHashMap<>();
+            List<String[]> allRows = new ArrayList<>();
+
             for (int i = 1; i < lines.size(); i++) {
-                if (!lines.get(i).trim().isEmpty()) {
-                    rows.add(lines.get(i).split(","));
-                }
+                String line = lines.get(i).trim();
+                if (line.isEmpty()) continue;
+                String[] cols = line.split(",");
+                allRows.add(cols);
+                String scenarioName = cols[0].trim();
+                groupedByScenario.computeIfAbsent(scenarioName, k -> new ArrayList<>()).add(cols);
             }
 
-            StringBuilder headerHtml = new StringBuilder("<tr>");
+            int totalCalls = allRows.size();
+            double totalDistance = 0;
+            double totalLatency = 0;
+            int latencyCount = 0;
+            int totalSuccess = 0;
+
+            StringBuilder scenarioRowsHtml = new StringBuilder();
+            for (Map.Entry<String, List<String[]>> entry : groupedByScenario.entrySet()) {
+                String scenario = entry.getKey();
+                List<String[]> sRows = entry.getValue();
+
+                double sDist = 0;
+                double sLat = 0;
+                int sLatCount = 0;
+                int sSuccess = 0;
+
+                for (String[] r : sRows) {
+                    if (distanceCol >= 0 && distanceCol < r.length) {
+                        sDist += parseSafeDouble(r[distanceCol]);
+                    }
+                    if (latencyCol >= 0 && latencyCol < r.length) {
+                        sLat += parseSafeDouble(r[latencyCol]);
+                        sLatCount++;
+                    }
+                    if (statusCol >= 0 && statusCol < r.length) {
+                        String st = r[statusCol].trim().toLowerCase();
+                        if (st.equals("200") || st.equals("ok") || st.equals("success") || st.equals("true")) {
+                            sSuccess++;
+                        }
+                    } else {
+                        sSuccess++;
+                    }
+                }
+
+                totalDistance += sDist;
+                totalLatency += sLat;
+                latencyCount += sLatCount;
+                totalSuccess += sSuccess;
+
+                double avgDist = sRows.isEmpty() ? 0 : sDist / sRows.size();
+                String latText = sLatCount > 0 ? String.format("%.2f ms", sLat / sLatCount) : "—";
+                double successPct = sRows.isEmpty() ? 0 : (sSuccess * 100.0) / sRows.size();
+
+                scenarioRowsHtml.append(String.format(
+                    "<tr><td><span class=\"badge\">%s</span></td><td>%d</td><td>%.0f όροφοι</td><td>%.1f όροφοι</td><td>%s</td><td>%.1f%%</td></tr>\n",
+                    scenario, sRows.size(), sDist, avgDist, latText, successPct
+                ));
+            }
+
+            double overallAvgDistance = totalCalls > 0 ? totalDistance / totalCalls : 0;
+            String fourthKpiLabel = latencyCount > 0 ? "Μέσο API Latency" : "Ποσοστό Επιτυχίας";
+            String fourthKpiValue = latencyCount > 0
+                ? String.format("%.2f ms", totalLatency / latencyCount)
+                : String.format("%.1f%%", totalCalls > 0 ? (totalSuccess * 100.0) / totalCalls : 0);
+
+            StringBuilder detailHeaderHtml = new StringBuilder("<tr>");
             for (String h : headers) {
-                headerHtml.append("<th>").append(h.trim()).append("</th>");
+                detailHeaderHtml.append("<th>").append(h.trim()).append("</th>");
             }
-            headerHtml.append("</tr>");
+            detailHeaderHtml.append("</tr>");
 
-            StringBuilder rowsHtml = new StringBuilder();
-            for (String[] row : rows) {
-                rowsHtml.append("<tr>");
-                for (String cell : row) {
-                    rowsHtml.append("<td>").append(cell.trim()).append("</td>");
+            StringBuilder detailRowsHtml = new StringBuilder();
+            for (String[] r : allRows) {
+                detailRowsHtml.append("<tr>");
+                for (int c = 0; c < r.length; c++) {
+                    if (c == 0) {
+                        detailRowsHtml.append("<td><span class=\"badge\">").append(r[c].trim()).append("</span></td>");
+                    } else {
+                        detailRowsHtml.append("<td>").append(r[c].trim()).append("</td>");
+                    }
                 }
-                rowsHtml.append("</tr>\n");
+                detailRowsHtml.append("</tr>\n");
             }
 
             String html = """
@@ -573,33 +650,83 @@ public class EvaluationSystem {
                     <meta charset="UTF-8">
                     <title>Smart Elevators - Αναφορά Αξιολόγησης</title>
                     <style>
-                        body { font-family: Arial, sans-serif; margin: 40px; background: #f8fafc; color: #1e293b; }
-                        h1 { color: #0f172a; }
-                        table { width: 100%%; border-collapse: collapse; background: #ffffff; margin-top: 20px; }
-                        th, td { padding: 12px; border: 1px solid #cbd5e1; text-align: left; }
-                        th { background: #e2e8f0; }
+                        body { background: #0f172a; color: #f8fafc; font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 32px; }
+                        .container { max-width: 1120px; margin: 0 auto; }
+                        h1 { color: #38bdf8; margin-bottom: 6px; font-size: 1.75rem; }
+                        h2 { color: #e2e8f0; font-size: 1.1rem; margin-top: 0; margin-bottom: 14px; }
+                        .subtitle { color: #94a3b8; margin-bottom: 26px; }
+                        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 28px; }
+                        .kpi-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
+                        .kpi-label { color: #94a3b8; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; }
+                        .kpi-value { font-size: 1.75rem; font-weight: 700; margin-top: 8px; color: #38bdf8; }
+                        .table-card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 22px; margin-bottom: 24px; overflow-x: auto; }
+                        table { width: 100%%; border-collapse: collapse; }
+                        th, td { padding: 11px 14px; border-bottom: 1px solid #334155; text-align: left; font-size: 0.92rem; }
+                        th { color: #94a3b8; font-weight: 600; }
+                        .badge { background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 4px 10px; border-radius: 6px; font-weight: 600; font-size: 0.84rem; }
                     </style>
                 </head>
                 <body>
-                    <h1>Smart Elevators — Αναφορά Αξιολόγησης</h1>
-                    <p>Συγκεντρωτικά αποτελέσματα προσομοίωσης ανά σενάριο κίνησης.</p>
-                    <table>
-                        <thead>%s</thead>
-                        <tbody>%s</tbody>
-                    </table>
+                    <div class="container">
+                        <h1>🏢 Smart Elevators — Αναφορά Αξιολόγησης</h1>
+                        <div class="subtitle">Συγκεντρωτικοί δείκτες απόδοσης &amp; ομαδοποίηση κλήσεων ανά σενάριο</div>
+                        <div class="kpi-grid">
+                            <div class="kpi-card"><div class="kpi-label">Συνολικές Κλήσεις</div><div class="kpi-value">%d</div></div>
+                            <div class="kpi-card"><div class="kpi-label">Συνολική Μετατόπιση</div><div class="kpi-value" style="color:#a78bfa;">%.0f όροφοι</div></div>
+                            <div class="kpi-card"><div class="kpi-label">Μέση Διαδρομή Κλήσης</div><div class="kpi-value" style="color:#34d399;">%.1f όροφοι</div></div>
+                            <div class="kpi-card"><div class="kpi-label">%s</div><div class="kpi-value" style="color:#fbbf24;">%s</div></div>
+                        </div>
+                        <div class="table-card">
+                            <h2>Σύνοψη Αποτελεσμάτων ανά Σενάριο</h2>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Σενάριο</th>
+                                        <th>Κλήσεις</th>
+                                        <th>Συνολική Μετατόπιση</th>
+                                        <th>Μέση Απόσταση</th>
+                                        <th>Μέσο Latency</th>
+                                        <th>Επιτυχία</th>
+                                    </tr>
+                                </thead>
+                                <tbody>%s</tbody>
+                            </table>
+                        </div>
+                        <div class="table-card">
+                            <h2>Αναλυτικό Αρχείο Κλήσεων</h2>
+                            <table><thead>%s</thead><tbody>%s</tbody></table>
+                        </div>
+                    </div>
                 </body>
                 </html>
-                """.formatted(headerHtml.toString(), rowsHtml.toString());
+                """.formatted(
+                    totalCalls,
+                    totalDistance,
+                    overallAvgDistance,
+                    fourthKpiLabel,
+                    fourthKpiValue,
+                    scenarioRowsHtml.toString(),
+                    detailHeaderHtml.toString(),
+                    detailRowsHtml.toString()
+                );
 
             Path target = Path.of(htmlPath);
             if (target.getParent() != null) {
                 Files.createDirectories(target.getParent());
             }
             Files.writeString(target, html, StandardCharsets.UTF_8);
-            System.out.println("📄 Δημιουργήθηκε η βασική αναφορά HTML: " + target.toAbsolutePath());
+            System.out.println("📊 Ενημερώθηκε η αναφορά HTML με KPI cards: " + target.toAbsolutePath());
 
         } catch (IOException e) {
             System.err.println("❌ Σφάλμα κατά τη δημιουργία HTML: " + e.getMessage());
+        }
+    }
+
+    private static double parseSafeDouble(String raw) {
+        try {
+            return Double.parseDouble(raw.trim().replace("%", ""));
+        } catch (NumberFormatException e) {
+            return 0.0;
         }
     }
 }
